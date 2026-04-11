@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/mahergzam/harness-gitops-hydration.git
     targetRevision: envs/prod
-    path:.
+    path: .
   destination:
     server: https://kubernetes.default.svc
     namespace: test-app-prod

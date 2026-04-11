@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/mahergzam/harness-gitops-hydration.git
     targetRevision: envs/preprod   # Argo CD watches this branch
-    path:.                         # all files in root of branch
+    path: .                         # all files in root of branch
   destination:
     server: https://kubernetes.default.svc
     namespace: test-app-preprod
