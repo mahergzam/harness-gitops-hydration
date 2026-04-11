@@ -3,7 +3,7 @@ kind: Kustomization
 namePrefix: preprod-
 namespace: test-app-preprod
 resources:
-  -../../base
+  - ../../base
 patches:
   - path: patch-replicas.yaml
     target:
