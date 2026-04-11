@@ -1,8 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: preprod-test-app
-  namespace: test-app-preprod
+  name: prod-test-app
+  namespace: test-app-prod
   labels:
     app: test-app
 spec:
