@@ -1,10 +1,11 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: preprod-test-app
-  namespace: test-app-preprod
   labels:
     app: test-app
+  name: preprod-test-app
+  namespace: test-app-preprod
 spec:
   replicas: 2
   selector:
@@ -16,14 +17,14 @@ spec:
         app: test-app
     spec:
       containers:
-        - name: test-app
-          image: nginx:1.25.0
-          ports:
-            - containerPort: 80
-          resources:
-            requests:
-              memory: "64Mi"
-              cpu: "50m"
-            limits:
-              memory: "128Mi"
-              cpu: "100m"
+      - image: nginx:1.25.0
+        name: test-app
+        ports:
+        - containerPort: 80
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
