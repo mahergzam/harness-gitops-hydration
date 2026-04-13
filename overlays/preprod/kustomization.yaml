@@ -11,4 +11,4 @@ patches:
       name: test-app
 images:
   - name: nginx
-    newTag: 1.26.0 
+    newTag: 1.25.0 
