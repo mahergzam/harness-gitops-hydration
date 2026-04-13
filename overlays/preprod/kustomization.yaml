@@ -11,4 +11,4 @@ patches:
       name: test-app
 images:
   - name: nginx
-    newTag: 1.25.0  # Harness pipeline will update this tag
+    newTag: 1.26.0 
