@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: test-app-pr-preview
+  namespace: argocd
+spec:
+  generators:
+    - pullRequest:
+        github:
+          owner: your-org
+          repo: harness-gitops-hydration
+          tokenRef:
+            secretName: github-token
+            key: token
+          labels:
+            - preview
+  template:
+    metadata:
+      name: test-app-pr-{{number}}
+      labels:
+        env: pr
+        app.kubernetes.io/name: test-app
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/your-org/harness-gitops-hydration.git
+        targetRevision: '{{head_sha}}'
+        path: overlays/preprod
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: test-app-pr-{{number}}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ApplyOutOfSyncOnly=true

@@ -1,0 +1,10 @@
+environment:
+  name: preprod
+  identifier: preprod
+  orgIdentifier: default
+  projectIdentifier: gitops_demo
+  type: PreProduction
+  variables:
+    - name: namespace
+      type: String
+      value: test-app-preprod

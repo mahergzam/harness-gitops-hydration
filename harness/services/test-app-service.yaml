@@ -1,0 +1,33 @@
+service:
+  name: test-app
+  identifier: test_app
+  orgIdentifier: default
+  projectIdentifier: gitops_demo
+  serviceDefinition:
+    type: Kubernetes
+    spec:
+      manifests:
+        - manifest:
+            identifier: app_manifests
+            type: K8sManifest
+            spec:
+              store:
+                type: Github
+                spec:
+                  connectorRef: account.github_connector
+                  gitFetchType: Branch
+                  branch: main
+                  folderPath: overlays/preprod
+                  repoName: harness-gitops-hydration
+              skipResourceVersioning: false
+              enableDeclarativeRollback: true
+      artifacts:
+        primary:
+          primaryArtifactRef: dockerhub_test_app
+          sources:
+            - identifier: dockerhub_test_app
+              type: DockerRegistry
+              spec:
+                connectorRef: account.dockerhub
+                imagePath: library/nginx
+                tag: <+input>
