@@ -1,0 +1,24 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: harness-gitops
+  name: preprod-success-rate
+  namespace: test-app-preprod
+spec:
+  args:
+  - name: service-name
+    value: test-app-stable
+  metrics:
+  - count: 5
+    interval: 1m
+    name: success-rate
+    provider:
+      prometheus:
+        address: http://prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          sum(rate(http_requests_total{service="{{args.service-name}}",code!~"5.."}[2m]))
+          /
+          sum(rate(http_requests_total{service="{{args.service-name}}"}[2m]))
+    successCondition: result[0] >= 0.99

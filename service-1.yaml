@@ -5,7 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: harness-gitops
     app.kubernetes.io/name: test-app
-  name: preprod-test-app-canary
+  name: preprod-test-app-stable
   namespace: test-app-preprod
 spec:
   ports:
