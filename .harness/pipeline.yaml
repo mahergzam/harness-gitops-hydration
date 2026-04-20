@@ -1,0 +1,356 @@
+pipeline:
+  name: GitOps Promotion Pipeline 2
+  identifier: GitOps_Promotion_Pipeline_2
+  projectIdentifier: playtikapov
+  orgIdentifier: default
+  tags: {}
+  stages:
+    - stage:
+        name: deloy
+        identifier: deloy
+        description: ""
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          gitOpsEnabled: true
+          service:
+            serviceRef: <+input>
+            serviceInputs: <+input>
+          execution:
+            steps:
+              - step:
+                  type: ShellScript
+                  name: Kustomize Build and Push to Release Branch
+                  identifier: Kustomize_Build_and_Push
+                  timeout: 15m
+                  spec:
+                    shell: Bash
+                    environmentVariables:
+                      - name: GITHUB_TOKEN
+                        type: Secret
+                        value: github_pat
+                      - name: PIPELINE_RUN_ID
+                        type: String
+                        value: <+pipeline.sequenceId>
+                      - name: REPO_URL
+                        type: String
+                        value: https://github.com/mahergzam/harness-gitops-hydration.git
+                      - name: ENV
+                        type: String
+                        value: preprod
+                      - name: SOURCE_REF
+                        type: String
+                        value: <+trigger.sourceBranch>
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          set -e
+
+                          SRC_DIR="/tmp/src-${PIPELINE_RUN_ID}"
+                          WORK_DIR="/tmp/gitops-${PIPELINE_RUN_ID}"
+                          BRANCH="envs/${ENV}-${PIPELINE_RUN_ID}"
+
+                          SOURCE_REF="${SOURCE_REF:-main}"
+
+                          echo "=== Cloning source repo at ref: ${SOURCE_REF} ==="
+                          git clone --depth=1 --branch ${SOURCE_REF} \
+                            https://x-access-token:${GITHUB_TOKEN}@${REPO_URL#https://} ${SRC_DIR}
+
+                          echo "=== Installing kustomize if not present ==="
+                          if ! command -v kustomize > /dev/null 2>&1; then
+                            curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+                            mv kustomize /usr/local/bin/
+                          fi
+
+                          echo "=== Running kustomize build from source ref ${SOURCE_REF} ==="
+                          kustomize build ${SRC_DIR}/overlays/${ENV}/ > /tmp/rendered-all.yaml
+                          echo "=== Rendered output ==="
+                          cat /tmp/rendered-all.yaml
+
+                          echo "=== Cloning gitops repo for env branch operations ==="
+                          git clone https://x-access-token:${GITHUB_TOKEN}@${REPO_URL#https://} ${WORK_DIR}
+                          cd ${WORK_DIR}
+
+                          echo "=== Switching to env branch ==="
+                          git fetch origin
+                          git checkout -b ${BRANCH} origin/envs/${ENV}
+
+                          echo "=== Writing rendered manifests as individual files ==="
+                          awk '
+                            /^---/ {
+                              if (kind != "" && body != "") {
+                                count[kind]++
+                                fname = (count[kind] == 1) ? kind ".yaml" : kind "-" (count[kind] - 1) ".yaml"
+                                print "---" > fname
+                                printf "%s", body >> fname
+                                print "Written: " fname
+                              }
+                              kind = ""
+                              body = ""
+                              next
+                            }
+                            /^kind:/ && kind == "" { kind = tolower($2) }
+                            { body = body $0 "\n" }
+                            END {
+                              if (kind != "" && body != "") {
+                                count[kind]++
+                                fname = (count[kind] == 1) ? kind ".yaml" : kind "-" (count[kind] - 1) ".yaml"
+                                print "---" > fname
+                                printf "%s", body >> fname
+                                print "Written: " fname
+                              }
+                            }
+                          ' /tmp/rendered-all.yaml
+
+                          echo "=== Committing and pushing ==="
+                          git config user.email "harness-ci@harness.io"
+                          git config user.name "Harness CI"
+                          git add .
+                          git status
+                          git diff --cached
+
+                          if git diff --cached --quiet; then
+                            echo "No changes detected — rendered output is identical to envs/${ENV}. Nothing to push."
+                            exit 0
+                          fi
+
+                          git commit -m "[Harness] Deploy run ${PIPELINE_RUN_ID} to ${ENV} from ${SOURCE_REF}"
+                          git push https://x-access-token:${GITHUB_TOKEN}@${REPO_URL#https://} ${BRANCH}
+
+                          echo "=== Branch ${BRANCH} pushed successfully ==="
+                    executionTarget: {}
+                    outputVariables: []
+              - step:
+                  type: ShellScript
+                  name: Post Diff Comment on PR
+                  identifier: Post_Diff_Comment
+                  timeout: 5m
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    environmentVariables:
+                      - name: GITHUB_TOKEN
+                        type: Secret
+                        value: github_pat
+                      - name: PIPELINE_RUN_ID
+                        type: String
+                        value: <+pipeline.sequenceId>
+                      - name: ENV
+                        type: String
+                        value: preprod
+                      - name: REPO
+                        type: String
+                        value: mahergzam/harness-gitops-hydration
+                      - name: PR_NUMBER
+                        type: String
+                        value: <+trigger.prNumber>
+                      - name: SOURCE_REF
+                        type: String
+                        value: <+trigger.sourceBranch>
+                    source:
+                      type: Inline
+                      spec:
+                        script: |
+                          BRANCH="envs/${ENV}-${PIPELINE_RUN_ID}"
+                          DIFF_URL="https://github.com/${REPO}/compare/envs/${ENV}...${BRANCH}"
+
+                          BODY="## GitOps Promotion Preview\n\n**Environment:** \`${ENV}\`\n**Release branch:** \`${BRANCH}\`\n**Source branch:** \`${SOURCE_REF}\`\n**Pipeline run:** ${PIPELINE_RUN_ID}\n\n[View rendered manifest diff](${DIFF_URL})\n\nMerge this PR to trigger the deployment to \`${ENV}\`."
+
+                          curl -s -X POST \
+                            -H "Authorization: token ${GITHUB_TOKEN}" \
+                            -H "Accept: application/vnd.github.v3+json" \
+                            "https://api.github.com/repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                            -d "{\"body\": \"${BODY}\"}"
+
+                          echo "Comment posted on PR #${PR_NUMBER}"
+                    outputVariables: []
+              - step:
+                  type: CustomApproval
+                  name: Wait For Merge
+                  identifier: CustomApproval_1
+                  spec:
+                    rejectionCriteria:
+                      type: KeyValues
+                      spec:
+                        matchAnyCondition: true
+                        conditions: []
+                    approvalCriteria:
+                      type: KeyValues
+                      spec:
+                        matchAnyCondition: false
+                        conditions:
+                          - key: merged
+                            operator: equals
+                            value: "true"
+                    scriptTimeout: 1d
+                    retryInterval: 15s
+                    shell: Bash
+                    onDelegate: true
+                    source:
+                      type: Inline
+                      spec:
+                        script: |
+                          echo "Checking PR #${PR_NUMBER}..."
+
+                          RESPONSE=$(curl -s \
+                            -H "Authorization: token ${GITHUB_TOKEN}" \
+                            -H "Accept: application/vnd.github.v3+json" \
+                            "https://api.github.com/repos/mahergzam/harness-gitops-hydration/pulls/${PR_NUMBER}")
+
+                          echo "Raw merged field: $(echo "${RESPONSE}" | grep '"merged"')"
+
+                          if echo "${RESPONSE}" | grep -q '"merged": true'; then
+                            pr_merged="true"
+                          else
+                            pr_merged="false"
+                          fi
+
+                          echo "PR #${PR_NUMBER} merged status: ${pr_merged}"
+                          export pr_merged
+                    environmentVariables:
+                      - name: GITHUB_TOKEN
+                        type: String
+                        value: <+secrets.getValue("github_pat")>
+                      - name: PR_NUMBER
+                        type: String
+                        value: <+trigger.prNumber>
+                    outputVariables:
+                      - name: merged
+                        type: String
+                        value: pr_merged
+                  timeout: 1d
+              - step:
+                  type: ShellScript
+                  name: Create Env PR
+                  identifier: Create_Env_PR
+                  timeout: 5m
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    environmentVariables:
+                      - name: GITHUB_TOKEN
+                        type: Secret
+                        value: github_pat
+                      - name: PIPELINE_RUN_ID
+                        type: String
+                        value: <+pipeline.sequenceId>
+                      - name: ENV
+                        type: String
+                        value: preprod
+                      - name: REPO
+                        type: String
+                        value: mahergzam/harness-gitops-hydration
+                    source:
+                      type: Inline
+                      spec:
+                        script: |
+                          BRANCH="envs/${ENV}-${PIPELINE_RUN_ID}"
+                          BASE="envs/${ENV}"
+
+                          PR_RESPONSE=$(curl -s -X POST \
+                            -H "Authorization: token ${GITHUB_TOKEN}" \
+                            -H "Accept: application/vnd.github.v3+json" \
+                            "https://api.github.com/repos/${REPO}/pulls" \
+                            -d "{\"title\": \"[GitOps] ${ENV} run ${PIPELINE_RUN_ID}\", \"head\": \"${BRANCH}\", \"base\": \"${BASE}\"}")
+
+                          echo "API Response: ${PR_RESPONSE:0:300}"
+
+                          PR_NUMBER=$(echo "${PR_RESPONSE}" | grep -o '"number": *[0-9]*' | head -1 | grep -o '[0-9]*')
+
+                          if [ -z "${PR_NUMBER}" ]; then
+                            echo "ERROR: Could not extract PR number from response"
+                            exit 1
+                          fi
+
+                          echo "Created PR #${PR_NUMBER} from ${BRANCH} into ${BASE}"
+                          export env_pr_number="${PR_NUMBER}"
+                    outputVariables:
+                      - name: env_pr_number
+                        type: String
+                        value: env_pr_number
+              - step:
+                  type: ShellScript
+                  name: Merge Env PR
+                  identifier: Merge_Env_PR
+                  timeout: 5m
+                  spec:
+                    shell: Bash
+                    executionTarget: {}
+                    environmentVariables:
+                      - name: GITHUB_TOKEN
+                        type: Secret
+                        value: github_pat
+                      - name: REPO
+                        type: String
+                        value: mahergzam/harness-gitops-hydration
+                      - name: PR_NUMBER
+                        type: String
+                        value: <+execution.steps.Create_Env_PR.output.outputVariables.env_pr_number>
+                      - name: PIPELINE_RUN_ID
+                        type: String
+                        value: <+pipeline.sequenceId>
+                      - name: ENV
+                        type: String
+                        value: preprod
+                    source:
+                      type: Inline
+                      spec:
+                        script: |
+                          echo "Merging PR #${PR_NUMBER}..."
+
+                          MERGE_RESPONSE=$(curl -s -X PUT \
+                            -H "Authorization: token ${GITHUB_TOKEN}" \
+                            -H "Accept: application/vnd.github.v3+json" \
+                            "https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}/merge" \
+                            -d "{\"merge_method\": \"merge\", \"commit_title\": \"[GitOps] Merge envs/${ENV}-${PIPELINE_RUN_ID} into envs/${ENV}\"}")
+
+                          echo "Merge response: ${MERGE_RESPONSE:0:300}"
+
+                          if echo "${MERGE_RESPONSE}" | grep -q '"merged": true'; then
+                            echo "PR #${PR_NUMBER} merged successfully"
+                          else
+                            echo "ERROR: Merge failed"
+                            exit 1
+                          fi
+                    outputVariables: []
+              - step:
+                  type: GitOpsSync
+                  name: GitOps Sync
+                  identifier: GitOps_Sync
+                  spec:
+                    prune: false
+                    dryRun: false
+                    applyOnly: false
+                    forceApply: false
+                    applicationsList:
+                      - applicationName: studio-app-preprod
+                        agentId: gitopsagent
+                    retryStrategy: {}
+                    retry: false
+                    syncOptions:
+                      skipSchemaValidation: false
+                      autoCreateNamespace: false
+                      pruneResourcesAtLast: false
+                      applyOutOfSyncOnly: false
+                      replaceResources: false
+                      prunePropagationPolicy: foreground
+                      respectIgnoreDifferences: false
+                      serverSideApply: false
+                    waitTillHealthy: true
+                    failOnTimeout: true
+                    degradedStateTimeout: 10m
+                  timeout: 10m
+            rollbackSteps: []
+          environment:
+            environmentRef: <+input>
+            deployToAll: <+input>
+            environmentInputs: <+input>
+            gitOpsClusters: <+input>
+        tags: {}
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
