@@ -1,0 +1,39 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: test-app-pr
+  namespace: oam-system
+  labels:
+    app.kubernetes.io/name: test-app
+    app.kubernetes.io/part-of: harness-gitops-hydration
+spec:
+  components:
+    - name: test-app
+      type: webservice
+      properties:
+        image: nginx:1.26.3
+        port: 8080
+        env:
+          - name: ENVIRONMENT
+            value: pr
+          - name: FEATURE_FLAG_CANARY
+            value: "true"
+      traits:
+        - type: scaler
+          properties:
+            replicas: 2
+        - type: labels
+          properties:
+            app.kubernetes.io/managed-by: harness-gitops
+  policies:
+    - name: topology-pr
+      type: topology
+      properties:
+        clusters: ["preprod"]
+        namespace: test-app-pr
+  workflow:
+    steps:
+      - name: deploy-pr
+        type: deploy
+        properties:
+          policies: ["topology-pr"]

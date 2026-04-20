@@ -7,8 +7,8 @@ resources:
 patches:
   - path: patch-replicas.yaml
     target:
-      kind: Deployment
+      kind: Rollout
       name: test-app
 images:
   - name: nginx
-    newTag: 1.25.0 
+    newTag: 1.26.3

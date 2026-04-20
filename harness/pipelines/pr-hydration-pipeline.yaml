@@ -1,0 +1,108 @@
+pipeline:
+  name: pr-hydration-gitops
+  identifier: pr_hydration_gitops
+  projectIdentifier: gitops_demo
+  orgIdentifier: default
+  tags:
+    owner: platform
+    pattern: pr-preview
+    oam: enabled
+  properties:
+    ci:
+      codebase:
+        connectorRef: account.github_connector
+        repoName: harness-gitops-hydration
+        build: <+input>
+  stages:
+    - stage:
+        name: Validate_and_Hydrate
+        identifier: validate_and_hydrate
+        type: CI
+        spec:
+          cloneCodebase: true
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Validate_manifests
+                  identifier: validate_manifests
+                  spec:
+                    shell: Sh
+                    image: alpine:3.20
+                    command: |
+                      set -euo pipefail
+                      apk add --no-cache curl bash git
+                      curl -sSLo /tmp/kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.4.2/kustomize_v5.4.2_linux_amd64.tar.gz
+                      tar -xzf /tmp/kustomize.tar.gz -C /tmp
+                      mv /tmp/kustomize /usr/local/bin/kustomize
+                      chmod +x /usr/local/bin/kustomize
+                      kustomize build overlays/preprod >/tmp/preprod.yaml
+                      kustomize build overlays/prod >/tmp/prod.yaml
+                      test -s /tmp/preprod.yaml
+                      test -s /tmp/prod.yaml
+              - step:
+                  type: Run
+                  name: Hydrate_OAM_to_Kubernetes
+                  identifier: hydrate_oam_to_kubernetes
+                  spec:
+                    shell: Sh
+                    image: ghcr.io/kubevela/vela-cli:v1.10.4
+                    command: |
+                      set -euo pipefail
+                      mkdir -p hydrated
+                      vela dry-run -f manifests/oam/application-pr-preview.yaml > hydrated/pr-${DRONE_PULL_REQUEST}.yaml
+                      test -s hydrated/pr-${DRONE_PULL_REQUEST}.yaml
+              - step:
+                  type: Run
+                  name: Push_hydrated_branch
+                  identifier: push_hydrated_branch
+                  spec:
+                    shell: Sh
+                    image: alpine/git:2.47.2
+                    command: |
+                      set -euo pipefail
+                      BRANCH="hydrated/pr-${DRONE_PULL_REQUEST}"
+                      git config user.email "harness-bot@example.com"
+                      git config user.name "harness-bot"
+                      git checkout -B "$BRANCH"
+                      git add hydrated/
+                      if git diff --cached --quiet; then
+                        echo "No hydrated changes to commit"
+                        exit 0
+                      fi
+                      git commit -m "chore(hydration): refresh hydrated manifests for PR #${DRONE_PULL_REQUEST}"
+                      git push origin "$BRANCH" --force
+    - stage:
+        name: Deploy_PR_Preview
+        identifier: deploy_pr_preview
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: test_app
+          environment:
+            environmentRef: preprod
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: preprod_k8s
+          execution:
+            steps:
+              - step:
+                  name: Rollout_Deploy
+                  identifier: rollout_deploy
+                  type: K8sRollingDeploy
+                  timeout: 10m
+              - step:
+                  name: Verify_Rollout
+                  identifier: verify_rollout
+                  type: K8sApply
+                  timeout: 10m
+                  spec:
+                    filePaths:
+                      - manifests/argocd/applicationset-pr-preview.yaml
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: StageRollback
