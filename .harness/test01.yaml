@@ -1,0 +1,22 @@
+service:
+  name: test01
+  identifier: test01
+  orgIdentifier: default
+  gitOpsEnabled: true
+  serviceDefinition:
+    spec:
+      manifests:
+        - manifest:
+            identifier: dd
+            type: ReleaseRepo
+            spec:
+              store:
+                type: Github
+                spec:
+                  connectorRef: org.githubmaher
+                  gitFetchType: Branch
+                  paths:
+                    - values.yaml
+                  branch: main
+                  repoName: harness-gitops-hydration
+    type: Kubernetes
